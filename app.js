@@ -13,8 +13,16 @@ app.use(bodyParser.urlencoded({
 app.use(bodyParser.json());
 app.use(session({secret: "Shh, its a secret!"}));
 var db = null;
-var sourceDb = null;
-var destinationDb = null;
+var sourceDb = {
+  dbClient: null,
+  dbCon: null,
+  dbName: null
+};
+var destinationDb = {
+  dbClient: null,
+  dbCon: null,
+  dbName: null
+};
 // connectToMongo("mongodb://localhost:27017/seasions").then(database => {
 // 	db = database;
 // });
@@ -34,14 +42,23 @@ app.get('/', function(req, res) {
 });
 
 app.post('/connect-to-mongo', function (req, res) {
-	if(req.body.sourceDb && req.body.destinationDb) return handleError(req,res,'A db may be source or detination once');
+	if((!req.body.sourceDb && !req.body.destinationDb) && req.body.dbName) return handleError(req,res,'Please provide db name and also sourceDb or destinationDb flag true or false');
 	// let obj = findSeasion(req,null,null);
 	// if(req.body.sourceDb && obj.sourceDb) return res.status(200).send('Already Connection Exist');
 	// if(req.body.destinationDb && obj.destinationDb) return res.status(200).send('Already Connection Exist');
-  connectToMongo(req.body.url).then(dbCon => {
-		 if(dbCon)  {
-			sourceDb = req.body.sourceDb ? dbCon : null;
-			destinationDb = req.body.destinationDb ? dbCon : null;
+  	connectToMongo(req.body.url).then(client => {
+		 if(client) {
+      if(req.body.sourceDb) {
+        sourceDb.dbClient = client;
+        sourceDb.dbCon = client.db(req.body.dbName);
+        sourceDb.dbName = req.body.dbName;
+      }
+      if(req.body.destinationDb) {
+        destinationDb.dbClient = client;
+        destinationDb.dbCon = client.db(req.body.dbName);
+        destinationDb.dbName = req.body.dbName;
+        console.log(destinationDb.dbCon,'destinationDb.dbCon')
+      }
 		 }
 		// let newObj = findSeasion(req,sourceDb,destinationDb);
 		//  console.log(dbCon,'sourceDb')
@@ -54,27 +71,33 @@ app.post('/connect-to-mongo', function (req, res) {
 });
 
 app.get('/getCollections/:dbType', function(req,res) {
-	console.log(req.params,'re')
-	if(!sourceDb) return handleError(req,res,'which db source or detination');
-	let dbType = 'source';
-	if(dbType === 'source') {
-		console.log(sourceDb,'req.session.sourceDb')
-		getCollectionsList(sourceDb,'TRADB')
-		.then(response => {
-			res.status(200).send(response);
-		}).catch(err => {
-			return handleError(req,res,err);
-		});
-	}
-	if(dbType === 'destinationDb') {
-		getCollectionsList(req.session.destinationDb)
-		.then(res => {
-			res.status(200).send(res);
-		}).catch(err => {
-			return handleError(req,res,err);
-		});
-	}
-	res.status(200)
+	let dbType = req.params.dbType;
+	if(dbType !== 'sourceDb' && dbType !== 'destinationDb') return handleError(req,res,'which db source or detination');
+  getCollectionsList(dbType === 'sourceDb' ? sourceDb.dbClient : destinationDb.dbClient, dbType === 'sourceDb' ? sourceDb.dbName : destinationDb.dbName)
+  .then(response => {
+    res.status(200).send(response);
+  }).catch(err => {
+    return handleError(req,res,err);
+  });
+});
+
+app.get('/getDataOfCollection/:dbType/:collectionName', function(req,res) {
+  let collectionName = req.params.collectionName;
+  // let dbCon = req.params.dbType === 'sourceDb' ? sourceDb.dbCon : destinationDb.dbCon;
+  console.log(sourceDb.dbCon,'sourceDb.dbCon')
+  sourceDb.dbCon.collection('bakesales').find({}, function(err, data) {
+    if(err) return handleError(req,res,err);
+    // console.log(data,'dkkk')
+    res.status(200).send('');
+  })
+});
+
+
+app.get('/export', function(req, res){ 
+  var spawn = require('child_process').spawn,
+  // mongoexport --uri="mongodb://mongodb0.example.com:27017/reporting"  --collection=events  --out=events.json [additional options]
+  ls = spawn('mongoexport',['--db','monopoly','--collection','newYork']);
+  res.sendfile('/home/database.csv') 
 });
 
 var server = app.listen(3000, function () {
