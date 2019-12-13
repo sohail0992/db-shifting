@@ -1,6 +1,8 @@
 var express = require('express');
 var session = require('express-session');
 var app = express();
+var cors = require("cors");
+app.use(cors())
 //uuid automatically generate unique strings
 const uuidv4 = require('uuid/v4');
 // const mongo = require('mongodb').MongoClient;
@@ -58,30 +60,40 @@ app.post('/connect-to-mongo', function (req, res) {
     // let obj = findSeasion(req,null,null);
     // if(req.body.sourceDb && obj.sourceDb) return res.status(200).send('Already Connection Exist');
     // if(req.body.destinationDb && obj.destinationDb) return res.status(200).send('Already Connection Exist');
-			connectToMongo(req.body.url).then(client => {
+			connectToMongo(req.body.sourceDb).then(client => {
 				if(client && client.name) {
-					if(req.body.sourceDb) {
+					getCollectionsList(client)
+					.then(allCollections => {
+						console.log(allCollections, "allCollections");
+						if(allCollections && allCollections.length > 0) {
+							sourceDb.collections = allCollections;
 							sourceDb.dbClient = client;
-							// sourceDb.dbCon = client.db(req.body.dbName);
 							sourceDb.dbName = client.name;
-					}
-					if(req.body.destinationDb) {
-							destinationDb.dbClient = client;
-							// destinationDb.dbCon = client.db(req.body.dbName);
-							destinationDb.dbName = client.name;
-							console.log(destinationDb.dbName, "destinationDb.dbName");
-							// console.log(destinationDb.dbCon,'destinationDb.dbCon')
-					}
+							sendData(client, req.body.destinationDb, allCollections);
+						}
+					})
 					res.status(200).send('Connected')
 				} else {
 					return handleError(req,res,'Connection failed');
 				}
-
 			}).catch(err => {
 					console.log(err,'err')
 					if(err) return handleError(req,res,err);
 			});
 });
+
+async function sendData(client,destinationDb,allCollections) {
+	connectToMongo(destinationDb).then(detClient => {
+			if (detClient && detClient.name) {
+				destinationDb.dbClient = detClient;
+				// destinationDb.dbCon = client.db(req.body.dbName);
+				destinationDb.dbName = detClient.name;
+				console.log(detClient.name, "destinationDb.dbName");
+				console.log(client.name,'source db');
+				migrate(client, detClient, allCollections);
+			}
+		});
+}
 
 app.get('/getCollections/:dbType', function(req,res) {
   let dbType = req.params.dbType;
@@ -115,12 +127,13 @@ app.get('/export-db', function(req, res) {
     .then(collections => {
       if (collections && collections.length > 0) {
 				collections.forEach(eachCollection => {
-					findDataInCollection(dbClient, eachCollection).then(dataOfCollection => {
-						processFileASync.writeFile(eachCollection + ".json", JSON.stringify(dataOfCollection), function(err,data) {
-							if (err) return handleError(req, res, "err");
-							console.log(data, "d");
-						});
-					});
+					exportCollectionToJson(collection);
+					// findDataInCollection(dbClient, eachCollection).then(dataOfCollection => {
+					// 	processFileASync.writeFile(eachCollection + ".json", JSON.stringify(dataOfCollection), function(err,data) {
+					// 		if (err) return handleError(req, res, "err");
+					// 		console.log(data, "d");
+					// 	});
+					// });
 				});
 				res.status(200).send('Export In Proccess. Please wait');
       } else {
@@ -128,9 +141,57 @@ app.get('/export-db', function(req, res) {
 			}
     })
     .catch(err => {
+			console.log(err,'err');
       return handleError(req, res, err);
     });
 });
+
+async function exportCollectionToJson(dbClient, eachCollection) {
+  findDataInCollection(dbClient, eachCollection).then(dataOfCollection => {
+		if(dataOfCollection) {
+			processFileASync.writeFile(eachCollection + ".json", JSON.stringify(dataOfCollection),function(err, data) {
+        if (err) return handleError(req, res, "err");
+        console.log(data, "d");
+				return data;
+      });
+		} else {
+			console.log('no data in collecton' + eachCollection);
+		}
+  });
+}
+
+async function migrate(sourceDb, destinationDb, collections) {
+  collections.forEach(eachCollection => {
+    let ignore = ["objectlabs-system.admin.collections", "objectlabs-system", "system.indexes"];
+    if (ignore.indexOf(eachCollection) === -1) {
+      findDataInCollection(sourceDb, eachCollection)
+			.then(dataOfCollection => {
+        writeDataInCollection(destinationDb, eachCollection, dataOfCollection)
+          .then(res => {})
+          .catch(errr => {
+            console.log(errr, "errr in writeDataInCollection");
+          });
+      });
+    }
+  });
+}
+
+app.get("/migrate", function(req,res) {
+	getCollectionsList(sourceDb.dbClient).then(collections => {
+    if (collections && collections.length > 0) {
+			count = collections.length;
+			console.log(collections, "allcollections");
+
+      res.status(200).send("Export In Proccess. Please wait");
+    } else {
+      return handleError(
+        req,
+        res,
+        "No Collections Record found try connecting again"
+      );
+    }
+  });
+})
 
 app.get("/import-db", function(req, res) {
   let dbClient = sourceDb.dbClient;
@@ -196,9 +257,9 @@ function findSeasion(req,sourceDb,destinationDb) {
 	return obj;
 }
 
-function findDataInCollection(dbClient,collectionName) {
+function findDataInCollection(dbInstance,collectionName) {
 	return new Promise((resolve, reject) => {
-		var collection = dbClient.db.collection(collectionName);
+		var collection = dbInstance.db.collection(collectionName);
 		collection.find().toArray(function(err, data) {
 			if (err) reject(err);
 			resolve(data);
@@ -235,7 +296,7 @@ function getCollectionsList(client) {
 
 function connectToMongo(url) {
 	return new Promise((resolve, reject) => {
-		mongoose.connect(url, { useNewUrlParser: true, useUnifiedTopology: true },
+		mongoose.createConnection(url, { useNewUrlParser: true, useUnifiedTopology: true },
       function(err, db) {
         if (err) {
           return reject(err);
