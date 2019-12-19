@@ -54,34 +54,74 @@ app.get('/', function(req, res) {
     }
 });
 
-app.post('/connect-to-mongo', function (req, res) {
-	 console.log(processFileASync, "processFileASync");
-    if((!req.body.sourceDb && !req.body.destinationDb) && req.body.dbName) return handleError(req,res,'Please provide db name and also sourceDb or destinationDb flag true or false');
-    // let obj = findSeasion(req,null,null);
-    // if(req.body.sourceDb && obj.sourceDb) return res.status(200).send('Already Connection Exist');
-    // if(req.body.destinationDb && obj.destinationDb) return res.status(200).send('Already Connection Exist');
-			connectToMongo(req.body.sourceDb).then(client => {
-				if(client && client.name) {
-					getCollectionsList(client)
-					.then(allCollections => {
-						console.log(allCollections, "allCollections");
-						if(allCollections && allCollections.length > 0) {
-							sourceDb.collections = allCollections;
-							sourceDb.dbClient = client;
-							sourceDb.dbName = client.name;
-							sendData(client, req.body.destinationDb, allCollections);
-						}
-					})
-					res.status(200).send('Connected')
-				} else {
-					return handleError(req,res,'Connection failed');
-				}
-			}).catch(err => {
-					console.log(err,'err')
-					if(err) return handleError(req,res,err);
-			});
+app.post('/connect-and-migrate', function (req, res) {
+  if((!req.body.sourceDb && !req.body.destinationDb) && req.body.dbName) return handleError(req,res,'Please provide db name and also sourceDb or destinationDb flag true or false');
+	try {
+		connectAndMigrate(req.body.sourceDb,req.body.destinationDb);
+	} catch (error) {
+		res.status(404).send({error: 'something went wrong'})
+	}
 });
 
+function connectAndMigrate(sourceDb, destinationDb) {
+	connectToMongo(req.body.source).then(sourcedbClient => {
+		return new Promise((resolve, reject) => {
+			if(sourcedbClient && sourcedbClient.name) {
+		 		logger.trace('ClientDb =>', sourcedbClient.name);
+				getCollectionsList(sourcedbClient).then(allCollections => {
+					logger.trace('allCollections(): BEGIN', allCollections);
+					if (allCollections && allCollections.length > 0) {
+						sourceDb.collections = allCollections;
+						sourceDb.dbClient = sourcedbClient;
+						sourceDb.dbName = sourcedbClient.name;
+						resolve(sourceDb);
+					} else {
+						reject('No collection found in source db');
+					}
+				}).catch(errInGettingCollectionList => {
+					logger.error('Error in Getting Collection list', errInGettingCollectionList);
+					reject('Error in Getting Collection list');
+				})
+			} else {
+				reject('Connecting to SourceDB failed');
+			}
+		}).then(sourceDb => {
+			return new Promise((resolve, reject) => {
+				connectToMongo(destinationDb).then(destinationDbClient => {
+					if(destinationDbClient && destinationDb.name) {
+						logger.trace('DestinationDb =>', destinationDb.name);
+					} else {
+						reject('Connecting to DestinationDB failed');
+					}
+				}).catch(errInConnectionToDestinationDB => {
+					logger.error('Connecting to DestinationDB failed',errInConnectionToDestinationDB)
+					reject('Connecting to DestinationDB failed');
+				})
+			});
+		}).then(destinationDb => {
+			migrate(client, detClient, allCollections);
+		})
+	}).catch(errInSourceConnection => {
+		logger.error('Connecting to SourceDb Failed', errInSourceConnection);
+		throw('Connecting to SourceDb Failed');
+	});
+}
+			
+
+
+	// connectToMongo(req.body.sourceDb)
+  //   .then(client => {
+  //     if (client && client.name) {
+  //       
+  //       res.status(200).send("Connected");
+  //     } else {
+  //       return handleError(req, res, "Connection failed");
+  //     }
+  //   })
+  //   .catch(err => {
+  //     console.log(err, "err");
+  //     if (err) return handleError(req, res, err);
+  //   });
 async function sendData(client,destinationDb,allCollections) {
 	connectToMongo(destinationDb).then(detClient => {
 			if (detClient && detClient.name) {
