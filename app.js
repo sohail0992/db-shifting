@@ -65,45 +65,45 @@ app.post('/connect-and-migrate', function (req, res) {
 
 function connectAndMigrate(sourceDb, destinationDb) {
 	connectToMongo(req.body.source).then(sourcedbClient => {
-		return new Promise((resolve, reject) => {
-			if(sourcedbClient && sourcedbClient.name) {
-		 		logger.trace('ClientDb =>', sourcedbClient.name);
-				getCollectionsList(sourcedbClient).then(allCollections => {
-					logger.trace('allCollections(): BEGIN', allCollections);
-					if (allCollections && allCollections.length > 0) {
-						sourceDb.collections = allCollections;
-						sourceDb.dbClient = sourcedbClient;
-						sourceDb.dbName = sourcedbClient.name;
-						resolve(sourceDb);
-					} else {
-						reject('No collection found in source db');
-					}
-				}).catch(errInGettingCollectionList => {
-					logger.error('Error in Getting Collection list', errInGettingCollectionList);
-					reject('Error in Getting Collection list');
-				})
-			} else {
-				reject('Connecting to SourceDB failed');
-			}
-		}).then(sourceDb => {
 			return new Promise((resolve, reject) => {
-				connectToMongo(destinationDb).then(destinationDbClient => {
-					if(destinationDbClient && destinationDb.name) {
-						logger.trace('DestinationDb =>', destinationDb.name);
-					} else {
+				if(sourcedbClient && sourcedbClient.name) {
+					logger.trace('ClientDb =>', sourcedbClient.name);
+					getCollectionsList(sourcedbClient).then(allCollections => {
+						logger.trace('allCollections(): BEGIN', allCollections);
+						if (allCollections && allCollections.length > 0) {
+							sourceDb.collections = allCollections;
+							sourceDb.dbClient = sourcedbClient;
+							sourceDb.dbName = sourcedbClient.name;
+							resolve(sourceDb);
+						} else {
+							reject('No collection found in source db');
+						}
+					}).catch(errInGettingCollectionList => {
+						logger.error('Error in Getting Collection list', errInGettingCollectionList);
+						reject('Error in Getting Collection list');
+					})
+				} else {
+					reject('Connecting to SourceDB failed');
+				}
+			}).then(sourceDb => {
+				return new Promise((resolve, reject) => {
+					connectToMongo(destinationDb).then(destinationDbClient => {
+						if(destinationDbClient && destinationDb.name) {
+							logger.trace('DestinationDb =>', destinationDb.name);
+						} else {
+							reject('Connecting to DestinationDB failed');
+						}
+					}).catch(errInConnectionToDestinationDB => {
+						logger.error('Connecting to DestinationDB failed',errInConnectionToDestinationDB)
 						reject('Connecting to DestinationDB failed');
-					}
-				}).catch(errInConnectionToDestinationDB => {
-					logger.error('Connecting to DestinationDB failed',errInConnectionToDestinationDB)
-					reject('Connecting to DestinationDB failed');
+					})
+				}).then(destinationDb => {
+					migrate(client, detClient, allCollections);
 				})
-			});
-		}).then(destinationDb => {
-			migrate(client, detClient, allCollections);
-		})
-	}).catch(errInSourceConnection => {
-		logger.error('Connecting to SourceDb Failed', errInSourceConnection);
-		throw('Connecting to SourceDb Failed');
+		}).catch(errInSourceConnection => {
+			logger.error('Connecting to SourceDb Failed', errInSourceConnection);
+			throw('Connecting to SourceDb Failed');
+		});
 	});
 }
 			
@@ -200,20 +200,27 @@ async function exportCollectionToJson(dbClient, eachCollection) {
   });
 }
 
-async function migrate(sourceDb, destinationDb, collections) {
-  collections.forEach(eachCollection => {
-    let ignore = ["objectlabs-system.admin.collections", "objectlabs-system", "system.indexes"];
-    if (ignore.indexOf(eachCollection) === -1) {
-      findDataInCollection(sourceDb, eachCollection)
-			.then(dataOfCollection => {
-        writeDataInCollection(destinationDb, eachCollection, dataOfCollection)
-          .then(res => {})
-          .catch(errr => {
-            console.log(errr, "errr in writeDataInCollection");
-          });
-      });
-    }
-  });
+function migrate(sourceDb, destinationDb, collections) {
+	return new Promise((resolve, reject) => {
+		collections.forEach(eachCollection => {
+			let ignore = ["objectlabs-system.admin.collections", "objectlabs-system", "system.indexes"];
+			if (ignore.indexOf(eachCollection) === -1) {
+				findDataInCollection(sourceDb, eachCollection).then(dataOfCollection => {
+					writeDataInCollection(destinationDb, eachCollection, dataOfCollection)
+						.then(res => {
+							resolve(res);
+						})
+						.catch(errInWritingDataToCollection => {
+							logger.error('Error In Writing Data In' + eachCollection + ' ' + errInWritingDataToCollection);
+							//don't reject in loop;
+						});
+				}).catch(errInReadingData => {
+					logger.error('Error In ReadingData from ' + eachCollection + ' ' + errInReadingData);
+					//don't reject in loop;
+				})
+			}
+		});
+	})
 }
 
 app.get("/migrate", function(req,res) {
@@ -221,7 +228,6 @@ app.get("/migrate", function(req,res) {
     if (collections && collections.length > 0) {
 			count = collections.length;
 			console.log(collections, "allcollections");
-
       res.status(200).send("Export In Proccess. Please wait");
     } else {
       return handleError(
