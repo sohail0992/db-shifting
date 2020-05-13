@@ -54,7 +54,7 @@ app.get('/', function(req, res) {
     }
 });
 
-app.post('/connect-to-mongo', function (req, res) {
+app.post('/initiate-db-migration', function (req, res) {
 	 console.log(processFileASync, "processFileASync");
     if((!req.body.sourceDb && !req.body.destinationDb) && req.body.dbName) return handleError(req,res,'Please provide db name and also sourceDb or destinationDb flag true or false');
     // let obj = findSeasion(req,null,null);
